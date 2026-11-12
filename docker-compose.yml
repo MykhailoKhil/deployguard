@@ -1,0 +1,71 @@
+# Full stack: DeployGuard (GitHub mode) plus PostgreSQL for verdict history.
+#
+# Local mode refuses non-loopback addresses, and a loopback address inside a container is
+# unreachable from the host, so run local mode with `go run ./cmd/deployguard` instead (see README).
+#
+#   cp .env.example .env     # set the two database passwords; add GitHub settings to .env or .env.github
+#   docker compose up --build
+#   docker compose --profile test run --rm tests     # Go tests against this stack's PostgreSQL
+#
+# DeployGuard speaks plain HTTP: put a TLS-terminating reverse proxy in front and set
+# DEPLOYGUARD_PUBLIC_ORIGIN to its HTTPS address.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres # admin account; DeployGuard never uses it
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      DEPLOYGUARD_DB_PASSWORD: ${DEPLOYGUARD_DB_PASSWORD:?set DEPLOYGUARD_DB_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init-app.sh:/docker-entrypoint-initdb.d/init-app.sh:ro
+    # 127.0.0.1, not the socket: during first-time init the server listens on the socket only.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    # No published ports: only services on this compose network can reach the database.
+
+  deployguard:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+      - path: .env.github # optional: GitHub App settings created by github-app-setup
+        required: false
+    environment:
+      DEPLOYGUARD_LISTEN_ADDRESS: ":8080"
+      # Role created by docker/postgres/init-app.sh. sslmode=require is mandatory for a remote host.
+      # The password must be URL-safe (hex is); percent-encode anything else.
+      DEPLOYGUARD_DATABASE_URL: postgres://deployguard:${DEPLOYGUARD_DB_PASSWORD:?set DEPLOYGUARD_DB_PASSWORD in .env}@postgres:5432/deployguard?sslmode=require
+    ports:
+      - "127.0.0.1:${DEPLOYGUARD_HOST_PORT:-8080}:8080" # expose to the proxy on this host only
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  # Not started by `up`: run with `docker compose --profile test run --rm tests`. It runs the Go
+  # tests inside this network, including the PostgreSQL integration tests against the postgres
+  # service. Each test creates (and drops) its own throwaway database and role.
+  tests:
+    profiles: ["test"]
+    image: golang:1.26
+    working_dir: /src
+    volumes:
+      - .:/src:ro
+      - gomodcache:/go
+    environment:
+      DEPLOYGUARD_TEST_POSTGRES_URL: postgres://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/postgres?sslmode=require
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["go", "test", "-race", "-count=1", "./..."]
+
+volumes:
+  pgdata:
+  gomodcache:

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">DeployGuard mark</title>
+  <desc id="desc">A shield containing an infrastructure change path and checkpoint.</desc>
+  <path d="M128 19 218 52v66c0 59-35 97-90 119-55-22-90-60-90-119V52z" fill="#1f5a46"/>
+  <path d="M128 33 204 61v57c0 51-29 85-76 105-47-20-76-54-76-105V61z" fill="none" stroke="#9ad9b2" stroke-opacity=".48" stroke-width="2"/>
+  <path d="M77 130h31l18-29 19 48 13-19h21" fill="none" stroke="#e9f8ee" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="77" cy="130" r="7" fill="#9ad9b2"/>
+  <circle cx="179" cy="130" r="7" fill="#9ad9b2"/>
+</svg>

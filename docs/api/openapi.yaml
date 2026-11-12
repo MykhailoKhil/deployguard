@@ -1,0 +1,295 @@
+openapi: 3.1.0
+info:
+  title: DeployGuard Web API
+  version: 0.1.0
+  description: Browser-facing GitHub sign-in and Terraform plan review flow.
+servers:
+  - url: /
+paths:
+  /auth/github:
+    get:
+      operationId: beginGitHubSignIn
+      summary: Start GitHub App user authorization
+      responses:
+        '302':
+          description: Redirect to GitHub authorization with a one-time state value.
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /auth/github/callback:
+    get:
+      operationId: completeGitHubSignIn
+      summary: Complete GitHub App user authorization
+      parameters:
+        - in: query
+          name: code
+          required: true
+          schema: { type: string, minLength: 1 }
+        - in: query
+          name: state
+          required: true
+          schema: { type: string, minLength: 32, maxLength: 256 }
+      responses:
+        '303':
+          description: OAuth state matches the one-time server state and the browser state cookie; the session cookie is established and the user is redirected to the review page.
+          headers:
+            Set-Cookie:
+              description: Opaque Secure, HttpOnly, SameSite=Lax session identifier.
+              schema: { type: string }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '502':
+          $ref: '#/components/responses/GitHubFailure'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /auth/logout:
+    post:
+      operationId: signOut
+      summary: End the current session
+      description: Requires a same-origin request and the session CSRF token in the form body.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '303':
+          description: Session revoked and browser redirected to sign-in.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /:
+    get:
+      operationId: showReviewHome
+      summary: Show accessible installed repositories and review form
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Server-rendered HTML review page.
+          content:
+            text/html:
+              schema: { type: string }
+        '303':
+          description: Redirect to GitHub sign-in when no session exists.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '502':
+          $ref: '#/components/responses/GitHubFailure'
+  /repositories/{repository_id}/pull-requests:
+    get:
+      operationId: listRepositoryPullRequests
+      summary: Show open pull requests for an authorized installed repository
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - in: path
+          name: repository_id
+          required: true
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        '200':
+          description: Server-rendered HTML pull request choices.
+          content:
+            text/html:
+              schema: { type: string }
+        '303':
+          description: Redirect to sign-in when no session exists.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '502':
+          $ref: '#/components/responses/GitHubFailure'
+  /reviews:
+    post:
+      operationId: analyzePullRequestPlan
+      summary: Analyze an uploaded JSON plan; optionally retrieve a verified Actions artifact
+      description: >-
+        Repository and pull request values are untrusted selectors. The service
+        re-fetches repository installation, user access, pull request state, and
+        current head from GitHub before associating any plan with that commit.
+        Upload accepts only Terraform JSON produced by terraform show -json,
+        not a binary tfplan. A direct upload is associated with the selected
+        current PR head but does not cryptographically attest that the plan
+        was generated from that commit. Plans are processed ephemerally and
+        never logged. Requests require a same-origin Origin header and a valid
+        session CSRF token.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/UploadReviewRequest'
+                - $ref: '#/components/schemas/ActionsReviewRequest'
+            encoding:
+              plan:
+                contentType: application/json
+      responses:
+        '200':
+          description: Server-rendered deterministic analysis for the verified PR head.
+          content:
+            text/html:
+              schema: { type: string }
+        '303':
+          description: Redirect to sign-in when no session exists.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          description: Request, plan, archive, or expanded artifact exceeds its limit.
+        '415':
+          description: The uploaded plan media type is unsupported.
+          content:
+            text/plain:
+              schema: { type: string }
+        '409':
+          description: The pull request head changed while analysis was running; no result is returned.
+          content:
+            text/plain:
+              schema: { type: string }
+        '422':
+          description: Plan JSON is invalid or the selected Actions run has no valid plan artifact.
+        '502':
+          $ref: '#/components/responses/GitHubFailure'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /history:
+    get:
+      operationId: showVerdictHistory
+      summary: Show past verdicts, newest first (local mode and GitHub mode)
+      description: >-
+        Server-rendered HTML. Local mode lists the verdicts of plans uploaded on this
+        machine (from the history file; only the verdict, rule IDs and a plan
+        fingerprint are kept). GitHub mode requires a session and lists verdicts only
+        for repositories the signed-in user can access, read from PostgreSQL inside
+        each installation's isolated scope; without a database it explains that
+        history is off. At most 100 rows are shown.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Server-rendered history page.
+          content:
+            text/html:
+              schema: { type: string }
+        '303':
+          description: Redirect to GitHub sign-in when no session exists (GitHub mode).
+        '502':
+          $ref: '#/components/responses/GitHubFailure'
+  /webhooks/github:
+    post:
+      operationId: receiveGitHubWebhook
+      summary: Receive a signed GitHub webhook (GitHub mode, when a webhook secret is configured)
+      description: >-
+        Called by GitHub, not by browsers. Every delivery must carry a valid
+        X-Hub-Signature-256 (HMAC-SHA256 of the raw body with the webhook secret);
+        the signature is checked before the event type, so an unsigned request
+        gets 401 whatever it claims to be. Event handling after that:
+        ping is answered 200; pull_request (opened, reopened, synchronize) and
+        workflow_run (completed, successful, from the same repository, for a pull
+        request) start an analysis whose result is published as one Check Run
+        (and, if enabled, one pull request comment); every other event, and
+        every other pull_request action such as closed or labeled, is
+        acknowledged with 202 and ignored. The repository must belong to the
+        installation named in the payload. A delivery whose X-GitHub-Delivery
+        ID was already processed is acknowledged with 202 and not processed
+        again; a delivery that failed with 5xx can be redelivered and retried.
+        The analysis runs in the background, so 202 means "queued".
+      parameters:
+        - { name: X-GitHub-Event, in: header, required: true, schema: { type: string } }
+        - { name: X-Hub-Signature-256, in: header, required: true, schema: { type: string, example: 'sha256=...' } }
+        - { name: X-GitHub-Delivery, in: header, required: false, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: ping acknowledged.
+        '202':
+          description: Accepted and queued, ignored (unused event or action), or a duplicate delivery.
+        '400':
+          description: Missing X-GitHub-Event, malformed JSON, or a relevant event with required fields missing.
+        '401':
+          description: Missing or invalid signature.
+        '403':
+          description: The repository does not belong to the installation named in the payload.
+        '405':
+          description: Only POST is accepted.
+        '413':
+          description: Body larger than the limit (1 MiB).
+        '429':
+          description: Rate limit exceeded.
+        '500':
+          description: The analysis could not be queued (for example too many in progress); GitHub may redeliver.
+  /healthz:
+    get:
+      operationId: healthCheck
+      summary: Liveness check for load balancers (GitHub mode with the webhook enabled)
+      responses:
+        '200':
+          description: The process is serving requests; body is "ok".
+          content:
+            text/plain:
+              schema: { type: string, example: ok }
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: deployguard_session
+  schemas:
+    ReviewSelection:
+      type: object
+      required: [repository_id, pull_request_number]
+      properties:
+        repository_id: { type: integer, format: int64, minimum: 1 }
+        pull_request_number: { type: integer, minimum: 1 }
+    UploadReviewRequest:
+      allOf:
+        - $ref: '#/components/schemas/ReviewSelection'
+        - type: object
+          required: [source, csrf_token, plan]
+          properties:
+            source: { const: upload }
+            csrf_token: { type: string, minLength: 32, maxLength: 256 }
+            plan:
+              type: string
+              format: binary
+              description: Terraform plan JSON, maximum 10 MiB.
+    ActionsReviewRequest:
+      allOf:
+        - $ref: '#/components/schemas/ReviewSelection'
+        - type: object
+          required: [source, csrf_token]
+          properties:
+            source: { const: actions }
+            csrf_token: { type: string, minLength: 32, maxLength: 256 }
+            run_id: { type: integer, format: int64, minimum: 1 }
+  responses:
+    BadRequest:
+      description: Invalid request fields or unsupported content.
+      content:
+        text/plain:
+          schema: { type: string }
+    Unauthorized:
+      description: Authentication is required or the session is invalid.
+      content:
+        text/plain:
+          schema: { type: string }
+    Forbidden:
+      description: The user, installation, repository, or selected commit is not authorized.
+      content:
+        text/plain:
+          schema: { type: string }
+    GitHubFailure:
+      description: GitHub could not verify the selected repository, PR, run, or artifact.
+      content:
+        text/plain:
+          schema: { type: string }
+    ServiceUnavailable:
+      description: Required GitHub App or session configuration is unavailable.
+      content:
+        text/plain:
+          schema: { type: string }

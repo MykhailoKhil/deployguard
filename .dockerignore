@@ -1,0 +1,8 @@
+.git
+.env
+.env.*
+!.env.example
+graphify-out
+Claude outputs
+docs
+*.md

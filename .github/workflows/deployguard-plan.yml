@@ -1,0 +1,106 @@
+name: DeployGuard Terraform plan
+
+# SECURITY NOTES - read before enabling.
+#
+# * `terraform plan` executes code from the pull request (Terraform
+#   configuration, `data "external"` sources and provider plugins). Anything that
+#   can open a same-repository pull request can run code in this job.
+# * The `deployguard-plan` environment MUST have required reviewers and MUST only
+#   expose read-only, short-lived cloud credentials (for example OIDC with a
+#   read-only role). Never place write or production-admin credentials here.
+# * This workflow is read from the pull request head, so a pull request author
+#   can edit it. Protect this file with CODEOWNERS and a branch ruleset that
+#   requires owner review for changes to `.github/workflows/`, or run plan
+#   generation from a trusted default-branch workflow. Until then DeployGuard
+#   treats the uploaded plan as unattested.
+# * Fork pull requests are skipped on purpose.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deployguard-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: deployguard-plan
+    # For plan provenance, uncomment both lines (and the attest step below). Keep job-level so the
+    # rest of the workflow stays read-only.
+    # permissions:
+    #   contents: read
+    #   id-token: write
+    #   attestations: write
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Initialize Terraform
+        run: terraform init -input=false
+
+      - name: Create Terraform plan
+        run: terraform plan -input=false -no-color -out=tfplan
+
+      - name: Convert Terraform plan to redacted JSON
+        # `terraform show -json` prints sensitive values in clear text. Keep only
+        # the fields DeployGuard reads and blank every value Terraform marks
+        # sensitive before the file becomes a downloadable artifact.
+        run: |
+          terraform show -json tfplan > tfplan.raw.json
+          jq '
+            def redact($m):
+              if $m == true then null
+              elif type == "object" and ($m | type) == "object" then
+                with_entries(.key as $k | .value |= redact($m[$k]))
+              elif type == "array" and ($m | type) == "array" then
+                . as $a | [range(0; length) as $i | $a[$i] | redact($m[$i])]
+              else . end;
+            {
+              format_version,
+              terraform_version,
+              resource_changes: [
+                (.resource_changes // [])[] | {
+                  address, mode, type, provider_name,
+                  change: (.change as $c | {
+                    actions: $c.actions,
+                    before: ($c.before | redact($c.before_sensitive)),
+                    after: ($c.after | redact($c.after_sensitive)),
+                    after_unknown: $c.after_unknown,
+                    before_sensitive: $c.before_sensitive,
+                    after_sensitive: $c.after_sensitive
+                  })
+                }
+              ]
+            }' tfplan.raw.json > tfplan.json
+          rm -f tfplan.raw.json
+
+      # OPTIONAL plan provenance (see README, "Plan provenance"). Uncomment this step AND the two
+      # permissions under `permissions:` at the top of this job. It needs a repository where GitHub
+      # artifact attestations are available; elsewhere the step fails and so does the workflow.
+      # - name: Attest plan provenance
+      #   uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      #   with:
+      #     subject-path: tfplan.json
+
+      - name: Upload plan JSON
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: deployguard-plan
+          path: tfplan.json
+          if-no-files-found: error
+          retention-days: 1

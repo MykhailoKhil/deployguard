@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="180" viewBox="0 0 780 180" role="img" aria-labelledby="title">
+  <title id="title">DeployGuard logo for light backgrounds</title>
+  <path d="M90 13 154 36v48c0 42-25 69-64 85-39-16-64-43-64-85V36z" fill="#1f5a46"/>
+  <path d="M90 23 144 43v41c0 36-21 60-54 74-33-14-54-38-54-74V43z" fill="none" stroke="#9ad9b2" stroke-opacity=".48" stroke-width="1.5"/>
+  <path d="M54 92h22l13-21 13 34 10-13h15" fill="none" stroke="#e9f8ee" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="54" cy="92" r="5" fill="#9ad9b2"/><circle cx="127" cy="92" r="5" fill="#9ad9b2"/>
+  <text x="184" y="113" fill="#1b2926" font-family="Inter, system-ui, -apple-system, sans-serif" font-size="72" font-weight="700" letter-spacing="-3">Deploy<tspan fill="#1f5a46">Guard</tspan></text>
+</svg>

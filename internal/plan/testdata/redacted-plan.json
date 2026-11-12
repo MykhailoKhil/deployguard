@@ -1,0 +1,83 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.8",
+  "resource_changes": [
+    {
+      "address": "aws_db_instance.main",
+      "mode": "managed",
+      "type": "aws_db_instance",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "identifier": "prod-db",
+          "password": null,
+          "tags": {
+            "env": "prod",
+            "token": null
+          },
+          "ports": [
+            1,
+            null
+          ]
+        },
+        "after": {
+          "identifier": "prod-db",
+          "password": null,
+          "tags": {
+            "env": "prod",
+            "token": null
+          },
+          "ports": [
+            1,
+            null
+          ],
+          "publicly_accessible": true
+        },
+        "after_unknown": {
+          "arn": true
+        },
+        "before_sensitive": {
+          "password": true,
+          "tags": {
+            "token": true
+          },
+          "ports": [
+            false,
+            true
+          ]
+        },
+        "after_sensitive": {
+          "password": true,
+          "tags": {
+            "token": true
+          },
+          "ports": [
+            false,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "address": "aws_s3_bucket.logs",
+      "mode": "managed",
+      "type": "aws_s3_bucket",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "bucket": "logs"
+        },
+        "after_unknown": {},
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    }
+  ]
+}
